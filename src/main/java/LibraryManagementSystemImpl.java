@@ -65,26 +65,175 @@ public class LibraryManagementSystemImpl implements LibraryManagementSystem {
         }
     }
 
-    @Override
     public ApiResult incBookStock(int bookId, int deltaStock) {
-        return new ApiResult(false, "Unimplemented Function");
-    }
+        Connection conn = connector.getConn();
+        try {
+            // Get the book from the database
+            PreparedStatement stmt = conn.prepareStatement("SELECT * FROM book WHERE book_id = ?");
+            stmt.setInt(1, bookId);
+            ResultSet rs = stmt.executeQuery();
 
+            if (!rs.next()) {
+                // The book does not exist
+                return new ApiResult(false, "Book does not exist");
+            }
+
+            int currentStock = rs.getInt("stock");
+
+            // Check if the final stock will be a non-negative number
+            if (currentStock + deltaStock < 0) {
+                return new ApiResult(false, "The final stock cannot be a negative number");
+            }
+
+            // Update the stock of the book
+            stmt = conn.prepareStatement("UPDATE book SET stock = stock + ? WHERE book_id = ?");
+            stmt.setInt(1, deltaStock);
+            stmt.setInt(2, bookId);
+            stmt.executeUpdate();
+
+            return new ApiResult(true, "The stock has been updated successfully");
+        } catch (SQLException e) {
+            e.printStackTrace();
+            return new ApiResult(false, e.getMessage());
+        }
+    }
     @Override
     public ApiResult storeBook(List<Book> books) {
-        return new ApiResult(false, "Unimplemented Function");
-    }
+        Connection conn = connector.getConn();
+        try {
+            // Start a transaction
+            conn.setAutoCommit(false);
 
+            // Prepare the SQL statement
+            PreparedStatement insertStmt = conn.prepareStatement(
+                    "INSERT INTO book (category, title, press, publish_year, author, price, stock) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    Statement.RETURN_GENERATED_KEYS
+            );
+
+            for (Book book : books) {
+                // Check if the book already exists
+                PreparedStatement checkStmt = conn.prepareStatement(
+                        "SELECT * FROM book WHERE category = ? AND title = ? AND press = ? AND publish_year = ? AND author = ?"
+                );
+                checkStmt.setString(1, book.getCategory());
+                checkStmt.setString(2, book.getTitle());
+                checkStmt.setString(3, book.getPress());
+                checkStmt.setInt(4, book.getPublishYear());
+                checkStmt.setString(5, book.getAuthor());
+                ResultSet rs = checkStmt.executeQuery();
+                if (rs.next()) {
+                    // The book already exists, rollback the transaction
+                    conn.rollback();
+                    return new ApiResult(false, "The book already exists in the library.");
+                }
+
+                // Insert the new book
+                insertStmt.setString(1, book.getCategory());
+                insertStmt.setString(2, book.getTitle());
+                insertStmt.setString(3, book.getPress());
+                insertStmt.setInt(4, book.getPublishYear());
+                insertStmt.setString(5, book.getAuthor());
+                insertStmt.setDouble(6, book.getPrice());
+                insertStmt.setInt(7, book.getStock());
+                insertStmt.executeUpdate();
+
+                // Retrieve the generated book_id
+                ResultSet generatedKeys = insertStmt.getGeneratedKeys();
+                if (generatedKeys.next()) {
+                    book.setBookId(generatedKeys.getInt(1));
+                }
+            }
+
+            // All books have been successfully stored, commit the transaction
+            conn.commit();
+
+            return new ApiResult(true, "All books have been successfully stored in the library.");
+        } catch (SQLException e) {
+            // An error occurred, rollback the transaction
+            try {
+                conn.rollback();
+            } catch (SQLException ex) {
+                ex.printStackTrace();
+            }
+            e.printStackTrace();
+            return new ApiResult(false, e.getMessage());
+        } finally {
+            try {
+                conn.setAutoCommit(true);
+            } catch (SQLException e) {
+                e.printStackTrace();
+            }
+        }
+    }
     @Override
     public ApiResult removeBook(int bookId) {
-        return new ApiResult(false, "Unimplemented Function");
-    }
+        Connection conn = connector.getConn();
+        try {
+            // Check if the book is currently borrowed
+            PreparedStatement checkStmt = conn.prepareStatement(
+                    "SELECT * FROM borrow WHERE book_id = ? AND return_time = 0"
+            );
+            checkStmt.setInt(1, bookId);
+            ResultSet rs = checkStmt.executeQuery();
+            if (rs.next()) {
+                // The book is currently borrowed and not returned yet
+                return new ApiResult(false, "The book is currently borrowed and not returned yet.");
+            }
 
+            // Delete the book from the database
+            PreparedStatement deleteStmt = conn.prepareStatement(
+                    "DELETE FROM book WHERE book_id = ?"
+            );
+            deleteStmt.setInt(1, bookId);
+            int affectedRows = deleteStmt.executeUpdate();
+
+            if (affectedRows == 0) {
+                // The book does not exist
+                return new ApiResult(false, "The book does not exist.");
+            }
+
+            // The book has been successfully removed
+            return new ApiResult(true, "The book has been successfully removed.");
+        } catch (SQLException e) {
+            e.printStackTrace();
+            return new ApiResult(false, e.getMessage());
+        }
+    }
     @Override
     public ApiResult modifyBookInfo(Book book) {
-        return new ApiResult(false, "Unimplemented Function");
-    }
+        Connection conn = connector.getConn();
+        try {
+            // Check if the book exists
+            PreparedStatement checkStmt = conn.prepareStatement(
+                    "SELECT * FROM book WHERE book_id = ?"
+            );
+            checkStmt.setInt(1, book.getBookId());
+            ResultSet rs = checkStmt.executeQuery();
+            if (!rs.next()) {
+                // The book does not exist
+                return new ApiResult(false, "The book does not exist.");
+            }
 
+            // Update the book information
+            PreparedStatement updateStmt = conn.prepareStatement(
+                    "UPDATE book SET category = ?, title = ?, press = ?, publish_year = ?, author = ?, price = ? WHERE book_id = ?"
+            );
+            updateStmt.setString(1, book.getCategory());
+            updateStmt.setString(2, book.getTitle());
+            updateStmt.setString(3, book.getPress());
+            updateStmt.setInt(4, book.getPublishYear());
+            updateStmt.setString(5, book.getAuthor());
+            updateStmt.setDouble(6, book.getPrice());
+            updateStmt.setInt(7, book.getBookId());
+            updateStmt.executeUpdate();
+
+            // The book information has been successfully updated
+            return new ApiResult(true, "The book information has been successfully updated.");
+        } catch (SQLException e) {
+            e.printStackTrace();
+            return new ApiResult(false, e.getMessage());
+        }
+    }
     @Override
     public ApiResult queryBook(BookQueryConditions conditions) {
         Connection conn = connector.getConn();
@@ -180,32 +329,240 @@ public class LibraryManagementSystemImpl implements LibraryManagementSystem {
 
     @Override
     public ApiResult borrowBook(Borrow borrow) {
-        return new ApiResult(false, "Unimplemented Function");
-    }
+        Connection conn = connector.getConn();
+        try {
+            // Check if the user has already borrowed the book but not returned it
+            PreparedStatement checkStmt = conn.prepareStatement(
+                    "SELECT * FROM borrow WHERE book_id = ? AND card_id = ? AND return_time = 0"
+            );
+            checkStmt.setInt(1, borrow.getBookId());
+            checkStmt.setInt(2, borrow.getCardId());
+            ResultSet rs = checkStmt.executeQuery();
+            if (rs.next()) {
+                // The user has already borrowed the book but not returned it
+                return new ApiResult(false, "The user has already borrowed the book but not returned it.");
+            }
 
+            // Check if the book is in stock
+            PreparedStatement stockStmt = conn.prepareStatement(
+                    "SELECT stock FROM book WHERE book_id = ?"
+            );
+            stockStmt.setInt(1, borrow.getBookId());
+            ResultSet stockRs = stockStmt.executeQuery();
+            if (stockRs.next() && stockRs.getInt("stock") <= 0) {
+                // The book is out of stock
+                return new ApiResult(false, "The book is out of stock.");
+            }
+
+            // Insert the new borrow record
+            PreparedStatement insertStmt = conn.prepareStatement(
+                    "INSERT INTO borrow (book_id, card_id, borrow_time) VALUES (?, ?, ?)",
+                    Statement.RETURN_GENERATED_KEYS
+            );
+            insertStmt.setInt(1, borrow.getBookId());
+            insertStmt.setInt(2, borrow.getCardId());
+            insertStmt.setLong(3, borrow.getBorrowTime());
+            insertStmt.executeUpdate();
+
+            // Update the stock of the book
+            PreparedStatement updateStmt = conn.prepareStatement(
+                    "UPDATE book SET stock = stock - 1 WHERE book_id = ?"
+            );
+            updateStmt.setInt(1, borrow.getBookId());
+            updateStmt.executeUpdate();
+
+            // The book has been successfully borrowed
+            return new ApiResult(true, "The book has been successfully borrowed.");
+        } catch (SQLException e) {
+            e.printStackTrace();
+            return new ApiResult(false, e.getMessage());
+        }
+    }
     @Override
     public ApiResult returnBook(Borrow borrow) {
-        return new ApiResult(false, "Unimplemented Function");
-    }
+        Connection conn = connector.getConn();
+        try {
+            // Check if the borrow record exists and the book has not been returned yet
+            PreparedStatement checkStmt = conn.prepareStatement(
+                    "SELECT * FROM borrow WHERE book_id = ? AND card_id = ? AND return_time = 0"
+            );
+            checkStmt.setInt(1, borrow.getBookId());
+            checkStmt.setInt(2, borrow.getCardId());
+            ResultSet rs = checkStmt.executeQuery();
+            if (!rs.next()) {
+                // The borrow record does not exist or the book has already been returned
+                return new ApiResult(false, "The borrow record does not exist or the book has already been returned.");
+            }
 
+            // Update the return time of the borrow record
+            PreparedStatement updateStmt = conn.prepareStatement(
+                    "UPDATE borrow SET return_time = ? WHERE book_id = ? AND card_id = ? AND return_time = 0"
+            );
+            updateStmt.setLong(1, borrow.getReturnTime());
+            updateStmt.setInt(2, borrow.getBookId());
+            updateStmt.setInt(3, borrow.getCardId());
+            updateStmt.executeUpdate();
+
+            // Update the stock of the book
+            PreparedStatement stockStmt = conn.prepareStatement(
+                    "UPDATE book SET stock = stock + 1 WHERE book_id = ?"
+            );
+            stockStmt.setInt(1, borrow.getBookId());
+            stockStmt.executeUpdate();
+
+            // The book has been successfully returned
+            return new ApiResult(true, "The book has been successfully returned.");
+        } catch (SQLException e) {
+            e.printStackTrace();
+            return new ApiResult(false, e.getMessage());
+        }
+    }
     @Override
     public ApiResult showBorrowHistory(int cardId) {
-        return new ApiResult(false, "Unimplemented Function");
-    }
+        Connection conn = connector.getConn();
+        try {
+            // Prepare the SQL statement
+            PreparedStatement stmt = conn.prepareStatement(
+                    "SELECT * FROM borrow WHERE card_id = ? ORDER BY borrow_time DESC, book_id ASC"
+            );
+            stmt.setInt(1, cardId);
 
+            // Execute the query
+            ResultSet rs = stmt.executeQuery();
+
+            // Collect the borrow records
+            List<Borrow> borrows = new ArrayList<>();
+            while (rs.next()) {
+                Borrow borrow = new Borrow();
+                borrow.setBookId(rs.getInt("book_id"));
+                borrow.setCardId(rs.getInt("card_id"));
+                borrow.setBorrowTime(rs.getLong("borrow_time"));
+                borrow.setReturnTime(rs.getLong("return_time"));
+                borrows.add(borrow);
+            }
+
+            // Check if there are any borrow records
+            if (borrows.isEmpty()) {
+                return new ApiResult(false, "No borrow records found for the given card id.");
+            }
+
+            // Return the borrow records as the payload of the ApiResult
+            return new ApiResult(true, borrows);
+        } catch (SQLException e) {
+            e.printStackTrace();
+            return new ApiResult(false, e.getMessage());
+        }
+    }
     @Override
     public ApiResult registerCard(Card card) {
-        return new ApiResult(false, "Unimplemented Function");
+        Connection conn = connector.getConn();
+        try {
+            // Check if the card already exists
+            PreparedStatement checkStmt = conn.prepareStatement(
+                    "SELECT * FROM card WHERE name = ? AND department = ? AND type = ?"
+            );
+            checkStmt.setString(1, card.getName());
+            checkStmt.setString(2, card.getDepartment());
+            checkStmt.setString(3, card.getType().toString());
+            ResultSet rs = checkStmt.executeQuery();
+            if (rs.next()) {
+                // The card already exists
+                return new ApiResult(false, "The card already exists.");
+            }
+
+            // Insert the new card
+            PreparedStatement insertStmt = conn.prepareStatement(
+                    "INSERT INTO card (name, department, type) VALUES (?, ?, ?)",
+                    Statement.RETURN_GENERATED_KEYS
+            );
+            insertStmt.setString(1, card.getName());
+            insertStmt.setString(2, card.getDepartment());
+            insertStmt.setString(3, card.getType().getStr());
+            insertStmt.executeUpdate();
+
+            // Retrieve the generated card_id
+            ResultSet generatedKeys = insertStmt.getGeneratedKeys();
+            if (generatedKeys.next()) {
+                card.setCardId(generatedKeys.getInt(1));
+            }
+
+            // The card has been successfully registered
+            return new ApiResult(true, "The card has been successfully registered.");
+        } catch (SQLException e) {
+            e.printStackTrace();
+            return new ApiResult(false, e.getMessage());
+        }
     }
 
     @Override
     public ApiResult removeCard(int cardId) {
-        return new ApiResult(false, "Unimplemented Function");
+        Connection conn = connector.getConn();
+        try {
+            // Check if the card is currently used to borrow a book
+            PreparedStatement checkStmt = conn.prepareStatement(
+                    "SELECT * FROM borrow WHERE card_id = ? AND return_time = 0"
+            );
+            checkStmt.setInt(1, cardId);
+            ResultSet rs = checkStmt.executeQuery();
+            if (rs.next()) {
+                // The card is currently used to borrow a book and the book is not returned yet
+                return new ApiResult(false, "The card is currently used to borrow a book and the book is not returned yet.");
+            }
+
+            // Delete the card from the database
+            PreparedStatement deleteStmt = conn.prepareStatement(
+                    "DELETE FROM card WHERE card_id = ?"
+            );
+            deleteStmt.setInt(1, cardId);
+            int affectedRows = deleteStmt.executeUpdate();
+
+            if (affectedRows == 0) {
+                // The card does not exist
+                return new ApiResult(false, "The card does not exist.");
+            }
+
+            // The card has been successfully removed
+            return new ApiResult(true, "The card has been successfully removed.");
+        } catch (SQLException e) {
+            e.printStackTrace();
+            return new ApiResult(false, e.getMessage());
+        }
     }
 
     @Override
     public ApiResult showCards() {
-        return new ApiResult(false, "Unimplemented Function");
+        Connection conn = connector.getConn();
+        try {
+            // Prepare the SQL statement
+            PreparedStatement stmt = conn.prepareStatement(
+                    "SELECT * FROM card"
+            );
+
+            // Execute the query
+            ResultSet rs = stmt.executeQuery();
+
+            // Collect the cards
+            List<Card> cards = new ArrayList<>();
+            while (rs.next()) {
+                Card card = new Card();
+                card.setCardId(rs.getInt("card_id"));
+                card.setName(rs.getString("name"));
+                card.setDepartment(rs.getString("department"));
+                card.setType(Card.CardType.values(rs.getString("type")));
+                cards.add(card);
+            }
+
+            // Check if there are any cards
+            if (cards.isEmpty()) {
+                return new ApiResult(false, "No cards found.");
+            }
+
+            // Return the cards as the payload of the ApiResult
+            return new ApiResult(true, cards);
+        } catch (SQLException e) {
+            e.printStackTrace();
+            return new ApiResult(false, e.getMessage());
+        }
     }
 
     @Override
