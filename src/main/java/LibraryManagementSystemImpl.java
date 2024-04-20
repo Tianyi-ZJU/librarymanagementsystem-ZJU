@@ -331,6 +331,28 @@ public class LibraryManagementSystemImpl implements LibraryManagementSystem {
     public ApiResult borrowBook(Borrow borrow) {
         Connection conn = connector.getConn();
         try {
+            // Check if the book exists
+            PreparedStatement bookCheckStmt = conn.prepareStatement(
+                    "SELECT * FROM book WHERE book_id = ?"
+            );
+            bookCheckStmt.setInt(1, borrow.getBookId());
+            ResultSet bookCheckRs = bookCheckStmt.executeQuery();
+            if (!bookCheckRs.next()) {
+                // The book does not exist
+                return new ApiResult(false, "The book does not exist.");
+            }
+
+            // Check if the card exists
+            PreparedStatement cardCheckStmt = conn.prepareStatement(
+                    "SELECT * FROM card WHERE card_id = ?"
+            );
+            cardCheckStmt.setInt(1, borrow.getCardId());
+            ResultSet cardCheckRs = cardCheckStmt.executeQuery();
+            if (!cardCheckRs.next()) {
+                // The card does not exist
+                return new ApiResult(false, "The card does not exist.");
+            }
+
             // Check if the user has already borrowed the book but not returned it
             PreparedStatement checkStmt = conn.prepareStatement(
                     "SELECT * FROM borrow WHERE book_id = ? AND card_id = ? AND return_time = 0"
@@ -394,6 +416,13 @@ public class LibraryManagementSystemImpl implements LibraryManagementSystem {
                 return new ApiResult(false, "The borrow record does not exist or the book has already been returned.");
             }
 
+            // Check if return_time is greater than borrow_time
+            long borrowTime = rs.getLong("borrow_time");
+            if (borrow.getReturnTime() <= borrowTime) {
+                // return_time is not greater than borrow_time
+                return new ApiResult(false, "Return time must be greater than borrow time.");
+            }
+
             // Update the return time of the borrow record
             PreparedStatement updateStmt = conn.prepareStatement(
                     "UPDATE borrow SET return_time = ? WHERE book_id = ? AND card_id = ? AND return_time = 0"
@@ -431,23 +460,43 @@ public class LibraryManagementSystemImpl implements LibraryManagementSystem {
             ResultSet rs = stmt.executeQuery();
 
             // Collect the borrow records
-            List<Borrow> borrows = new ArrayList<>();
+            List<BorrowHistories.Item> items = new ArrayList<>();
             while (rs.next()) {
+                // Get the book details
+                PreparedStatement bookStmt = conn.prepareStatement(
+                        "SELECT * FROM book WHERE book_id = ?"
+                );
+                bookStmt.setInt(1, rs.getInt("book_id"));
+                ResultSet bookRs = bookStmt.executeQuery();
+                if (!bookRs.next()) {
+                    // The book does not exist
+                    return new ApiResult(false, "The book does not exist.");
+                }
+                Book book = new Book();
+                book.setBookId(bookRs.getInt("book_id"));
+                book.setCategory(bookRs.getString("category"));
+                book.setTitle(bookRs.getString("title"));
+                book.setPress(bookRs.getString("press"));
+                book.setPublishYear(bookRs.getInt("publish_year"));
+                book.setAuthor(bookRs.getString("author"));
+                book.setPrice(bookRs.getDouble("price"));
+                book.setStock(bookRs.getInt("stock"));
+
+                // Create a new BorrowHistories.Item object
                 Borrow borrow = new Borrow();
                 borrow.setBookId(rs.getInt("book_id"));
                 borrow.setCardId(rs.getInt("card_id"));
                 borrow.setBorrowTime(rs.getLong("borrow_time"));
                 borrow.setReturnTime(rs.getLong("return_time"));
-                borrows.add(borrow);
+                BorrowHistories.Item item = new BorrowHistories.Item(cardId, book, borrow);
+                items.add(item);
             }
 
-            // Check if there are any borrow records
-            if (borrows.isEmpty()) {
-                return new ApiResult(false, "No borrow records found for the given card id.");
-            }
+            // Create a new BorrowHistories object
+            BorrowHistories histories = new BorrowHistories(items);
 
-            // Return the borrow records as the payload of the ApiResult
-            return new ApiResult(true, borrows);
+            // Return the BorrowHistories object as the payload of the ApiResult
+            return new ApiResult(true, histories);
         } catch (SQLException e) {
             e.printStackTrace();
             return new ApiResult(false, e.getMessage());
@@ -463,7 +512,7 @@ public class LibraryManagementSystemImpl implements LibraryManagementSystem {
             );
             checkStmt.setString(1, card.getName());
             checkStmt.setString(2, card.getDepartment());
-            checkStmt.setString(3, card.getType().toString());
+            checkStmt.setString(3, card.getType().getStr());
             ResultSet rs = checkStmt.executeQuery();
             if (rs.next()) {
                 // The card already exists
@@ -535,7 +584,7 @@ public class LibraryManagementSystemImpl implements LibraryManagementSystem {
         try {
             // Prepare the SQL statement
             PreparedStatement stmt = conn.prepareStatement(
-                    "SELECT * FROM card"
+                    "SELECT * FROM card ORDER BY card_id ASC"
             );
 
             // Execute the query
@@ -552,13 +601,11 @@ public class LibraryManagementSystemImpl implements LibraryManagementSystem {
                 cards.add(card);
             }
 
-            // Check if there are any cards
-            if (cards.isEmpty()) {
-                return new ApiResult(false, "No cards found.");
-            }
+            // Create a new CardList object
+            CardList cardList = new CardList(cards);
 
-            // Return the cards as the payload of the ApiResult
-            return new ApiResult(true, cards);
+            // Return the CardList object as the payload of the ApiResult
+            return new ApiResult(true, cardList);
         } catch (SQLException e) {
             e.printStackTrace();
             return new ApiResult(false, e.getMessage());
